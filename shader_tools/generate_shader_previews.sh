@@ -30,6 +30,9 @@ NETWORK_PORT="55355"
 # We will use the simple "SCREENSHOT" command which saves to the specified directory.
 SCREENSHOT_COMMAND="SCREENSHOT"
 
+# Set a default sleep time
+SLEEP_TIME=5
+
 # ==============================================================================
 # SCRIPT LOGIC
 # ==============================================================================
@@ -40,21 +43,14 @@ mount -o remount,rw /
 # Function to process a single shader file
 process_shader_file() {
     local SHADER_FILE=$1
-
-    # Check if the file exists and is a regular file
-    if [[ ! -f "$SHADER_FILE" ]]; then
-        echo "Error: Shader file not found at $SHADER_FILE"
-        return 1
-    fi
+    local SCREENSHOT_DIR=$2
 
     # Determine the video driver and output directory based on file extension
     EXTENSION="${SHADER_FILE##*.}"
     if [[ "$EXTENSION" == "slangp" ]]; then
         VIDEO_DRIVER="vulkan"
-        SCREENSHOT_DIR="/recalbox/share/screenshots/shader-previews-vulkan/"
     elif [[ "$EXTENSION" == "glslp" ]]; then
         VIDEO_DRIVER="gl"
-        SCREENSHOT_DIR="/recalbox/share/screenshots/shader-previews-opengl/"
     else
         echo "Error: Skipping file with unknown or unsupported extension: $SHADER_FILE"
         return 1
@@ -107,9 +103,9 @@ EOF
     # Store the Process ID (PID) of RetroArch
     RETROARCH_PID=$!
 
-    # 3. Give RetroArch a few seconds to load the image and shader
-    echo "Waiting for RetroArch to load the content..."
-    sleep 5
+    # 3. Give RetroArch time to load the image and shader based on the SLEEP_TIME variable
+    echo "Waiting for RetroArch to load the content for $SLEEP_TIME seconds..."
+    sleep $SLEEP_TIME
 
     # 4. Send the screenshot command to RetroArch via UDP
     echo "Sending screenshot command..."
@@ -141,17 +137,59 @@ EOF
     rm "$TEMP_CONFIG_FILE"
 }
 
-# Check if a command-line argument (a specific shader path) is provided
-if [[ -n "$1" ]]; then
-    echo "Single shader file provided. Processing: $1"
-    process_shader_file "$1"
+# Define screenshot directories
+VULKAN_SCREENSHOT_DIR="/recalbox/share/screenshots/shader-previews-vulkan/"
+OPENGL_SCREENSHOT_DIR="/recalbox/share/screenshots/shader-previews-opengl/"
+
+# Check for the '--missing' flag and set the sleep time accordingly
+if [[ "$1" == "--missing" ]]; then
+    echo "Running in missing previews mode. Setting longer sleep time."
+    SLEEP_TIME=30
+    SHIFT_ARGS=1
 else
-    # 1. Loop through all shaders and take a screenshot for each
-    echo "No shader file provided. Scanning all .slangp and .glslp shaders..."
+    # The default SLEEP_TIME is already set to 5
+    SHIFT_ARGS=0
+fi
+
+# Check if a command-line argument (a specific shader path) is provided
+if [[ -n "$1" && "$1" != "--missing" ]]; then
+    # Single shader mode
+    echo "Single shader file provided. Processing: $1"
     
-    # We find files with either .slangp or .glslp extension, up to one level deep.
+    # Determine the screenshot directory for the single file
+    EXTENSION="${1##*.}"
+    if [[ "$EXTENSION" == "slangp" ]]; then
+        process_shader_file "$1" "$VULKAN_SCREENSHOT_DIR"
+    elif [[ "$EXTENSION" == "glslp" ]]; then
+        process_shader_file "$1" "$OPENGL_SCREENSHOT_DIR"
+    else
+        echo "Error: Skipping file with unknown or unsupported extension: $1"
+        exit 1
+    fi
+else
+    # Batch mode
+    echo "Scanning all .slangp and .glslp shaders..."
     for SHADER_FILE in $( (find "$SHADER_DIR" -maxdepth 1 -type f -name "*.slangp" -o -name "*.glslp" && find "$SHADER_DIR" -mindepth 2 -maxdepth 2 -type f -name "*.slangp" -o -name "*.glslp") | sort); do
-        process_shader_file "$SHADER_FILE"
+        EXTENSION="${SHADER_FILE##*.}"
+        if [[ "$EXTENSION" == "slangp" ]]; then
+            CURRENT_SCREENSHOT_DIR="$VULKAN_SCREENSHOT_DIR"
+        elif [[ "$EXTENSION" == "glslp" ]]; then
+            CURRENT_SCREENSHOT_DIR="$OPENGL_SCREENSHOT_DIR"
+        fi
+
+        # Determine the full path to the potential output file
+        RELATIVE_PATH=${SHADER_FILE#$SHADER_DIR}
+        OUTPUT_DIR="$CURRENT_SCREENSHOT_DIR$(dirname "$RELATIVE_PATH")"
+        FILENAME=$(basename "$SHADER_FILE" .$EXTENSION)
+        FINAL_SCREENSHOT_PATH="$OUTPUT_DIR/$FILENAME.png"
+
+        # Check for the '--missing' flag and if the screenshot file already exists
+        if [[ "$1" == "--missing" && -f "$FINAL_SCREENSHOT_PATH" ]]; then
+            echo "Screenshot already exists for $SHADER_FILE. Skipping."
+            continue
+        fi
+
+        process_shader_file "$SHADER_FILE" "$CURRENT_SCREENSHOT_DIR"
     done
 fi
 
