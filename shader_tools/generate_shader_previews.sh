@@ -37,16 +37,15 @@ SCREENSHOT_COMMAND="SCREENSHOT"
 # Unlock file system
 mount -o remount,rw /
 
-# 1. Loop through all shaders and take a screenshot for each
-echo "Searching for .slangp and .glslp shaders in $SHADER_DIR and first level subdirectories..."
+# Function to process a single shader file
+process_shader_file() {
+    local SHADER_FILE=$1
 
-# We find files with either .slangp or .glslp extension, up to one level deep.
-# -maxdepth 1 finds files in the root directory only.
-# -mindepth 2 -maxdepth 2 finds files only in the first level of subdirectories.
-# This ensures we don't go deeper than one level of subdirectories.
-# The ` -o ` operator is used to find files matching either extension.
-for SHADER_FILE in $( (find "$SHADER_DIR" -maxdepth 1 -type f -name "*.slangp" -o -name "*.glslp" && find "$SHADER_DIR" -mindepth 2 -maxdepth 2 -type f -name "*.slangp" -o -name "*.glslp") | sort); do
-    echo "Processing shader: $SHADER_FILE"
+    # Check if the file exists and is a regular file
+    if [[ ! -f "$SHADER_FILE" ]]; then
+        echo "Error: Shader file not found at $SHADER_FILE"
+        return 1
+    fi
 
     # Determine the video driver and output directory based on file extension
     EXTENSION="${SHADER_FILE##*.}"
@@ -57,10 +56,11 @@ for SHADER_FILE in $( (find "$SHADER_DIR" -maxdepth 1 -type f -name "*.slangp" -
         VIDEO_DRIVER="gl"
         SCREENSHOT_DIR="/recalbox/share/screenshots/shader-previews-opengl/"
     else
-        echo "Skipping file with unknown extension: $SHADER_FILE"
-        continue
+        echo "Error: Skipping file with unknown or unsupported extension: $SHADER_FILE"
+        return 1
     fi
 
+    echo "Processing shader: $SHADER_FILE"
     echo "Using driver: $VIDEO_DRIVER"
     echo "Saving screenshots to: $SCREENSHOT_DIR"
 
@@ -139,6 +139,20 @@ EOF
 
     # Remove the temporary config file
     rm "$TEMP_CONFIG_FILE"
-done
+}
+
+# Check if a command-line argument (a specific shader path) is provided
+if [[ -n "$1" ]]; then
+    echo "Single shader file provided. Processing: $1"
+    process_shader_file "$1"
+else
+    # 1. Loop through all shaders and take a screenshot for each
+    echo "No shader file provided. Scanning all .slangp and .glslp shaders..."
+    
+    # We find files with either .slangp or .glslp extension, up to one level deep.
+    for SHADER_FILE in $( (find "$SHADER_DIR" -maxdepth 1 -type f -name "*.slangp" -o -name "*.glslp" && find "$SHADER_DIR" -mindepth 2 -maxdepth 2 -type f -name "*.slangp" -o -name "*.glslp") | sort); do
+        process_shader_file "$SHADER_FILE"
+    done
+fi
 
 echo "All shaders processed. Script finished."
